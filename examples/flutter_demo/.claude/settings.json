@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:8080/api/spec)",
+      "Bash(curl -v http://localhost:8080/api/spec)",
+      "Bash(curl -s --noproxy localhost http://localhost:8080/api/spec)",
+      "Bash(curl -s --noproxy localhost 'http://localhost:8080/api/logs?onlyErrors=true&limit=20')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s --noproxy localhost 'http://localhost:8080/api/violations')",
+      "Bash(curl -s --noproxy localhost 'http://localhost:8080/api/logs?limit=50')",
+      "Bash(curl -s --noproxy localhost 'http://localhost:8080/api/status')",
+      "Bash(flutter devices *)"
+    ]
+  }
+}
