@@ -1,81 +1,114 @@
 # API Inspector
 
-Debug-only API observer for Flutter development.
+Debug-only API observer for Flutter development with built-in HTTP API for AI integration.
 
-The project uses Flutter's official VM Service channel to move API logs from a
-running Flutter app to a desktop dashboard or an HTTP API. It targets macOS
-and Windows for the desktop tool.
+Monitor your Flutter app's HTTP requests in real-time with a desktop dashboard and HTTP API server.
 
-## Packages
+## Features
 
-- `packages/api_observer_flutter`: Flutter SDK. Add this to your app and install
-  `ApiObserverDioInterceptor` on Dio.
-- `packages/api_inspector_cli`: Dart CLI plus stdio MCP server.
-- `apps/api_inspector_desktop`: Flutter desktop dashboard for macOS and Windows with built-in HTTP API.
-- `examples/flutter_demo`: Demo app that emits requests and one contract
-  violation.
+- **Real-time API Monitoring** - View all HTTP requests in a desktop dashboard
+- **Contract Validation** - Define API contracts and detect violations automatically
+- **HTTP API Server** - Built-in `localhost:8080` API for AI integration
+- **Auto-redaction** - Sensitive data (tokens, passwords) redacted by default
+- **cURL Export** - Export any request as cURL command
+- **Cross-platform** - macOS and Windows support
 
-## Flutter App Setup
+## Project Structure
+
+```
+httpcheck/
+├── packages/
+│   ├── api_observer_flutter/    # Flutter SDK - add to your app
+│   └── api_inspector_cli/       # Dart CLI tools
+├── apps/
+│   └── api_inspector_desktop/   # Desktop dashboard (macOS/Windows)
+└── examples/
+    └── flutter_demo/            # Demo app showing integration
+```
+
+## Quick Start
+
+### 1. Install the SDK
+
+```bash
+flutter pub add api_observer_flutter dio
+```
+
+### 2. Add to Your Flutter App
 
 ```dart
-if (!kReleaseMode) {
-  ApiObserver.instance.configure(
-    validator: ApiContractValidator([
-      ApiContractRule(
-        method: 'GET',
-        pathPattern: '/user/profile',
-        fields: [
-          FieldRule('data.id', type: FieldType.integer, required: true, nullable: false),
-          FieldRule('data.nickname', type: FieldType.string, maxLength: 20),
-        ],
-      ),
-    ]),
-  );
-  ApiObserver.instance.registerVmServiceExtensions();
+import 'package:api_observer_flutter/api_observer_flutter.dart';
+import 'package:dio/dio.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (!kReleaseMode) {
+    // Configure optional contract validation
+    ApiObserver.instance.configure(
+      validator: ApiContractValidator([
+        ApiContractRule(
+          method: 'GET',
+          pathPattern: '/user/profile',
+          fields: [
+            FieldRule('data.id', type: FieldType.integer, required: true),
+            FieldRule('data.nickname', type: FieldType.string, maxLength: 20),
+          ],
+        ),
+      ]),
+    );
+    // Register VM Service extensions
+    ApiObserver.instance.registerVmServiceExtensions();
+  }
+  runApp(MyApp());
 }
 
-dio.interceptors.add(ApiObserverDioInterceptor());
+// Add the interceptor to your Dio client
+final dio = Dio();
+if (!kReleaseMode) {
+  dio.interceptors.add(ApiObserverDioInterceptor());
+}
 ```
 
-Only enable this in debug/profile builds. The package returns redacted data by
-default for keys such as `Authorization`, `Cookie`, `token`, `password`, and
-`phone`.
-
-## Run From The Desktop App
-
-Start the desktop dashboard:
+### 3. Run the Desktop App
 
 ```bash
 cd apps/api_inspector_desktop
-flutter run -d macos
+flutter run -d macos    # macOS
+# or
+flutter run -d windows  # Windows
 ```
 
-Use `flutter run -d windows` on Windows.
+The HTTP API server starts automatically at `http://localhost:8080`.
 
-In the `Run` page:
+### 4. Connect to Your App
 
-1. Set `Flutter project directory` to the app you want to debug.
-2. Select an Android emulator, iOS simulator, macOS, or Windows device.
-3. Click `Run`.
+In the desktop app:
+1. **Run Tab**: Set your Flutter project path and select a device
+2. Click **Run** - the app will start and connect automatically
+3. **Traffic Tab**: View all API requests in real-time
+4. **Issues Tab**: View contract violations
 
-The desktop app runs `flutter run -d <device>`, watches the output, extracts the
-VM Service URL, and connects automatically. The `Traffic` page then behaves like
-a packet-capture view with request list, details, response body, cURL, timing,
-errors, and contract violations.
+## Demo App
 
-Manual URL connection is still available from `Settings`.
-
-## Run The Demo
-
-Terminal:
+The demo app (`examples/flutter_demo`) shows a complete integration with:
+- Contract validation (name field exceeds max length)
+- Data redaction (token field)
+- Error handling (404 responses)
 
 ```bash
+# Terminal 1 - Start desktop app
 cd apps/api_inspector_desktop
+flutter run -d macos
+
+# Terminal 2 - Run demo (or use desktop app's Run tab)
+cd examples/flutter_demo
 flutter run -d macos
 ```
 
-Then set the project directory to `examples/flutter_demo`, choose a device, and
-click `Run`. Press the buttons in the demo app to emit traffic.
+**Demo Buttons:**
+- **GET /users/1** - Fetches user data (contract violation: name exceeds 8 chars)
+- **POST /posts** - Creates a post (shows redaction of 'token' field)
+- **GET /not-found** - Triggers 404 error
 
 ## HTTP API
 
@@ -83,13 +116,22 @@ When the desktop app starts, an HTTP API server is available at `http://localhos
 
 ### Available Endpoints
 
-```
-GET /api/spec         # OpenAPI specification
-GET /api/logs         # Query API request logs
-GET /api/logs/:id     # Get single request detail
-GET /api/violations   # List contract violations
-GET /api/status       # Server status
-```
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/spec` | OpenAPI specification - AI can auto-discover all endpoints |
+| `GET /api/logs?query=&limit=30` | Query API request logs with optional filters |
+| `GET /api/logs/:id` | Get single request detail by ID |
+| `GET /api/violations` | List all contract violations |
+| `GET /api/status` | Server connection status |
+
+### Query Parameters for `/api/logs`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string | Search keyword for path or method |
+| `limit` | integer | Max results (default: 30) |
+| `onlyErrors` | boolean | Only return requests with errors |
+| `onlyViolations` | boolean | Only return requests with violations |
 
 ### Examples
 
@@ -97,7 +139,7 @@ GET /api/status       # Server status
 # Check server status
 curl http://localhost:8080/api/status
 
-# Get API specification
+# Get API specification (for AI auto-discovery)
 curl http://localhost:8080/api/spec
 
 # Query logs
@@ -111,49 +153,47 @@ curl http://localhost:8080/api/logs/req_xxx
 curl http://localhost:8080/api/violations
 ```
 
-The API serves JSON responses with CORS enabled for cross-origin requests.
+## Data Redaction
 
-## CLI Usage
+The following sensitive fields are automatically redacted:
+- `authorization`
+- `cookie`
+- `token`
+- `password`
+- `phone`
+- `secret`
 
-```bash
-cd packages/api_inspector_cli
-dart run bin/api_inspector_cli.dart ping --vm-service http://127.0.0.1:xxxxx/yyyy=/
-dart run bin/api_inspector_cli.dart list --vm-service http://127.0.0.1:xxxxx/yyyy=/
-dart run bin/api_inspector_cli.dart detail --vm-service http://127.0.0.1:xxxxx/yyyy=/ --id req_xxx
-dart run bin/api_inspector_cli.dart violations --vm-service http://127.0.0.1:xxxxx/yyyy=/
-```
+## Building Release Binaries
 
-## MCP Usage
-
-Run the CLI in MCP mode and pass the same VM Service URL:
+### macOS
 
 ```bash
-dart run bin/api_inspector_cli.dart mcp --vm-service http://127.0.0.1:xxxxx/yyyy=/
+cd apps/api_inspector_desktop
+flutter build macos --release
+# Output: build/macos/Build/Products/Release/api_inspector_desktop.app
 ```
 
-Available tools:
+### Windows
 
-- `search_api_logs`
-- `get_request_detail`
-- `list_contract_violations`
+```bash
+cd apps/api_inspector_desktop
+flutter build windows --release
+# Output: build/windows/x64/runner/Release/
+```
 
-## Current Scope
+## GitHub Setup
 
-Implemented:
+To push to GitHub and enable automated builds:
 
-- Dio request/response/error capture
-- Redaction
-- In-memory ring buffer
-- Contract validation
-- Flutter VM Service extension
-- Dart CLI
-- stdio MCP server
-- Flutter desktop dashboard for macOS/Windows
-- **Built-in HTTP API server for AI integration**
+```bash
+# Create a new repository on GitHub first, then:
+git remote add origin https://github.com/YOUR_USERNAME/httpcheck.git
+git branch -M main
+git push -u origin main
+```
 
-Next useful additions:
+Once pushed, go to the **Actions** tab to see the build progress and download release artifacts.
 
-- Automatic VM Service URL discovery
-- Persistent sessions
-- Schema diff across samples
-- VS Code extension wrapper
+## License
+
+MIT License
