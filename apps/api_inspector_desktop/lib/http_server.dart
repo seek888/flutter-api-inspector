@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:api_inspector_cli/api_inspector_cli.dart';
@@ -9,10 +10,7 @@ import 'package:shelf_router/shelf_router.dart';
 
 /// HTTP API 服务器，为 AI 提供查询接口
 class ApiInspectorHttpServer {
-  ApiInspectorHttpServer({
-    this.host = 'localhost',
-    this.port = 8080,
-  });
+  ApiInspectorHttpServer({this.host = 'localhost', this.port = 8080});
 
   final String host;
   final int port;
@@ -31,10 +29,13 @@ class ApiInspectorHttpServer {
     final handler = Pipeline()
         .addMiddleware(_logRequests())
         .addMiddleware(_corsHeaders())
-        .addHandler(router);
+        .addHandler(router.call);
 
     _server = await shelf_io.serve(handler, host, port);
-    print('API Inspector HTTP server started on http://$host:$port');
+    developer.log(
+      'API Inspector HTTP server started on http://$host:$port',
+      name: 'api_inspector_desktop.http_server',
+    );
   }
 
   /// 停止服务器
@@ -53,12 +54,14 @@ class ApiInspectorHttpServer {
     return (Handler innerHandler) {
       return (Request request) async {
         final response = await innerHandler(request);
-        return response.change(headers: {
-          ...response.headers,
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-        });
+        return response.change(
+          headers: {
+            ...response.headers,
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+          },
+        );
       };
     };
   }
@@ -67,7 +70,10 @@ class ApiInspectorHttpServer {
   Middleware _logRequests() {
     return (Handler innerHandler) {
       return (Request request) {
-        print('[${DateTime.now()}] ${request.method} ${request.url.path}');
+        developer.log(
+          '${request.method} ${request.url.path}',
+          name: 'api_inspector_desktop.http_server',
+        );
         return innerHandler(request);
       };
     };
@@ -89,7 +95,8 @@ class ApiInspectorHttpServer {
         '/api/logs': {
           'get': {
             'summary': 'Query API request logs',
-            'description': 'Get a list of captured API requests with optional filtering',
+            'description':
+                'Get a list of captured API requests with optional filtering',
             'parameters': [
               {
                 'name': 'query',
@@ -159,11 +166,10 @@ class ApiInspectorHttpServer {
         '/api/violations': {
           'get': {
             'summary': 'List contract violations',
-            'description': 'Get all API requests that have contract validation violations',
+            'description':
+                'Get all API requests that have contract validation violations',
             'responses': {
-              '200': {
-                'description': 'List of violations',
-              },
+              '200': {'description': 'List of violations'},
             },
           },
         },
@@ -172,9 +178,7 @@ class ApiInspectorHttpServer {
             'summary': 'Server status',
             'description': 'Get current server and connection status',
             'responses': {
-              '200': {
-                'description': 'Status information',
-              },
+              '200': {'description': 'Status information'},
             },
           },
         },
@@ -196,7 +200,8 @@ class ApiInspectorHttpServer {
           },
           'RequestDetail': {
             'type': 'object',
-            'description': 'Full request/response details including headers, body, timing, etc.',
+            'description':
+                'Full request/response details including headers, body, timing, etc.',
           },
         },
       },
@@ -258,10 +263,7 @@ class ApiInspectorHttpServer {
           headers: _jsonHeaders,
         );
       }
-      return Response.ok(
-        jsonEncode(detail),
-        headers: _jsonHeaders,
-      );
+      return Response.ok(jsonEncode(detail), headers: _jsonHeaders);
     } catch (e) {
       return Response.internalServerError(
         body: jsonEncode({'error': e.toString()}),
@@ -279,10 +281,7 @@ class ApiInspectorHttpServer {
 
     try {
       final violations = await client.listViolations();
-      return Response.ok(
-        jsonEncode(violations),
-        headers: _jsonHeaders,
-      );
+      return Response.ok(jsonEncode(violations), headers: _jsonHeaders);
     } catch (e) {
       return Response.internalServerError(
         body: jsonEncode({'error': e.toString()}),
@@ -304,10 +303,7 @@ class ApiInspectorHttpServer {
         'GET /api/status',
       ],
     };
-    return Response.ok(
-      jsonEncode(status),
-      headers: _jsonHeaders,
-    );
+    return Response.ok(jsonEncode(status), headers: _jsonHeaders);
   }
 
   Response _serviceUnavailable(String message) {

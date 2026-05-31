@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  FLUTTER_VERSION: '3.38.7'
+
 jobs:
   build-macos:
     runs-on: macos-latest
@@ -17,7 +20,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.1'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
           cache: true
 
@@ -35,7 +38,7 @@ jobs:
       - name: Create macOS archive
         run: |
           cd apps/api_inspector_desktop/build/macos/Build/Products/Release
-          zip -r ../../../../../api-inspector-macos.zip api_inspector_desktop.app
+          zip -r "$GITHUB_WORKSPACE/api-inspector-macos.zip" api_inspector_desktop.app
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -53,7 +56,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.1'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
           cache: true
 
@@ -75,7 +78,7 @@ jobs:
 
       - name: Create Windows archive
         run: |
-          Compress-Archive -Path apps/api_inspector_desktop build windows x64 release * -DestinationPath api-inspector-windows.zip
+          Compress-Archive -Path "apps/api_inspector_desktop/build/windows/x64/runner/Release/*" -DestinationPath "api-inspector-windows.zip"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
