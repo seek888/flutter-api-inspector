@@ -7,12 +7,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'http_server.dart';
+import 'runtime_logs.dart';
 
 late final ApiInspectorHttpServer _httpServer;
+late final RuntimeLogStore _runtimeLogStore;
 
 void main() {
+  _runtimeLogStore = RuntimeLogStore();
   // 启动 HTTP 服务器
-  _httpServer = ApiInspectorHttpServer();
+  _httpServer = ApiInspectorHttpServer(runtimeLogs: _runtimeLogStore);
   // 使用 unawaited 避免警告，服务器会异步启动
   unawaited(_httpServer.start());
   runApp(const ApiInspectorApp());
@@ -165,18 +168,25 @@ class _DashboardPageState extends State<DashboardPage> {
         workingDirectory: _projectController.text.trim(),
         runInShell: Platform.isWindows,
       );
+      _runtimeLogStore.startRun(
+        projectPath: _projectController.text.trim(),
+        deviceId: device.id,
+      );
       _flutterProcess = process;
-      _listenFlutterOutput(process.stdout);
-      _listenFlutterOutput(process.stderr);
+      _listenFlutterOutput(process.stdout, stream: 'stdout');
+      _listenFlutterOutput(process.stderr, stream: 'stderr');
       unawaited(
         process.exitCode.then((code) {
           if (!mounted) {
             return;
           }
-          setState(() {
-            _runningFlutter = false;
-            _appendConsole('flutter run exited with code $code');
-          });
+          setState(() => _runningFlutter = false);
+          _appendConsole(
+            'flutter run exited with code $code',
+            stream: 'stdout',
+            type: 'lifecycle',
+            level: code == 0 ? 'info' : 'error',
+          );
         }),
       );
     } catch (error) {
@@ -187,20 +197,23 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  void _listenFlutterOutput(Stream<List<int>> stream) {
-    stream.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      line,
-    ) {
-      _appendConsole(line);
-      final url = _extractVmServiceUrl(line);
-      if (url != null && url != _vmServiceUrl) {
-        setState(() {
-          _vmServiceUrl = url;
-          _urlController.text = url;
-        });
-        unawaited(_connect(url));
-      }
-    });
+  void _listenFlutterOutput(
+    Stream<List<int>> outputStream, {
+    required String stream,
+  }) {
+    outputStream.transform(utf8.decoder).transform(const LineSplitter()).listen(
+      (line) {
+        _appendConsole(line, stream: stream);
+        final url = _extractVmServiceUrl(line);
+        if (url != null && url != _vmServiceUrl) {
+          setState(() {
+            _vmServiceUrl = url;
+            _urlController.text = url;
+          });
+          unawaited(_connect(url));
+        }
+      },
+    );
   }
 
   String? _extractVmServiceUrl(String line) {
@@ -314,10 +327,28 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  void _appendConsole(String text) {
+  void _appendConsole(
+    String text, {
+    required String stream,
+    String type = 'log',
+    String? level,
+  }) {
     if (!mounted) {
       return;
     }
+    _runtimeLogStore.add(
+      source: 'console',
+      stream: stream,
+      level: level ?? (stream == 'stderr' ? 'error' : 'info'),
+      type: type,
+      message: text,
+      raw: text,
+      context: <String, Object?>{
+        if (_selectedDevice != null) 'deviceId': _selectedDevice!.id,
+        if (_projectController.text.trim().isNotEmpty)
+          'projectPath': _projectController.text.trim(),
+      },
+    );
     setState(() {
       _console.add(text);
       if (_console.length > 1000) {

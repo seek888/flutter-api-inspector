@@ -7,6 +7,7 @@ Monitor your Flutter app's HTTP requests in real-time with a desktop dashboard a
 ## Features
 
 - **Real-time API Monitoring** - View all HTTP requests in a desktop dashboard
+- **Runtime Log Search** - Query Flutter run console output and AI/debug markers
 - **Contract Validation** - Define API contracts and detect violations automatically
 - **HTTP API Server** - Built-in `localhost:8080` API for AI integration
 - **Auto-redaction** - Sensitive data (tokens, passwords) redacted by default
@@ -122,6 +123,10 @@ When the desktop app starts, an HTTP API server is available at `http://localhos
 | `GET /api/logs?query=&limit=30` | Query API request logs with optional filters |
 | `GET /api/logs/:id` | Get single request detail by ID |
 | `GET /api/violations` | List all contract violations |
+| `GET /api/runtime-logs` | Search Flutter run console/runtime logs |
+| `GET /api/runtime-logs/:id` | Get one runtime log entry |
+| `GET /api/runtime-logs/context?id=...` | Get logs around a runtime log entry |
+| `POST /api/runtime-logs/markers` | Write an AI/debug marker into runtime logs |
 | `GET /api/status` | Server connection status |
 
 ### Query Parameters for `/api/logs`
@@ -151,6 +156,38 @@ curl http://localhost:8080/api/logs/req_xxx
 
 # List violations
 curl http://localhost:8080/api/violations
+
+# Search runtime logs from flutter run stdout/stderr
+curl "http://localhost:8080/api/runtime-logs?q=timeout&sinceMs=600000&levels=error"
+curl "http://localhost:8080/api/runtime-logs?stream=stderr&limit=20&order=asc"
+
+# Get context around a runtime log entry
+curl "http://localhost:8080/api/runtime-logs/context?id=log_xxx&before=100&after=50"
+
+# Let an AI mark the beginning of an investigation
+curl -X POST http://localhost:8080/api/runtime-logs/markers \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"start debugging login timeout"}'
+```
+
+## AI CLI Access
+
+MCP is optional. Any AI CLI that can run shell commands can query runtime logs through the bundled CLI:
+
+```bash
+cd packages/api_inspector_cli
+
+# Search recent Flutter console/runtime logs
+dart run bin/api_inspector_cli.dart logs search --since 10m --levels error
+
+# Tail logs as NDJSON for machine processing
+dart run bin/api_inspector_cli.dart logs tail --limit 50 --jsonl
+
+# Get context around an interesting log entry
+dart run bin/api_inspector_cli.dart logs context --id log_xxx --before 100 --after 50
+
+# Write a marker before a debugging attempt
+dart run bin/api_inspector_cli.dart logs mark "start debugging login timeout"
 ```
 
 ## Data Redaction

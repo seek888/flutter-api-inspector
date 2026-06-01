@@ -8,14 +8,23 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
+import 'runtime_logs.dart';
+
 /// HTTP API 服务器，为 AI 提供查询接口
 class ApiInspectorHttpServer {
-  ApiInspectorHttpServer({this.host = 'localhost', this.port = 8080});
+  ApiInspectorHttpServer({
+    required this.runtimeLogs,
+    this.host = 'localhost',
+    this.port = 8080,
+  });
 
+  final RuntimeLogStore runtimeLogs;
   final String host;
   final int port;
   HttpServer? _server;
   ApiInspectorClient? _client;
+
+  int? get boundPort => _server?.port;
 
   /// 启动 HTTP 服务器
   Future<void> start() async {
@@ -24,6 +33,10 @@ class ApiInspectorHttpServer {
       ..get('/api/logs', _handleLogs)
       ..get('/api/logs/<id>', _handleLogDetail)
       ..get('/api/violations', _handleViolations)
+      ..get('/api/runtime-logs', _handleRuntimeLogs)
+      ..get('/api/runtime-logs/context', _handleRuntimeLogContext)
+      ..get('/api/runtime-logs/<id>', _handleRuntimeLogDetail)
+      ..post('/api/runtime-logs/markers', _handleRuntimeLogMarker)
       ..get('/api/status', _handleStatus);
 
     final handler = Pipeline()
@@ -58,7 +71,7 @@ class ApiInspectorHttpServer {
           headers: {
             ...response.headers,
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type',
           },
         );
@@ -182,6 +195,131 @@ class ApiInspectorHttpServer {
             },
           },
         },
+        '/api/runtime-logs': {
+          'get': {
+            'summary': 'Search Flutter runtime logs',
+            'description':
+                'Search console output, lifecycle markers, AI markers, and runtime events.',
+            'parameters': [
+              {
+                'name': 'q',
+                'in': 'query',
+                'description':
+                    'Full-text search over message, raw output, and errors',
+                'schema': {'type': 'string'},
+              },
+              {
+                'name': 'sinceMs',
+                'in': 'query',
+                'description': 'Only logs from the last N milliseconds',
+                'schema': {'type': 'integer'},
+              },
+              {
+                'name': 'sources',
+                'in': 'query',
+                'description': 'Comma-separated sources, e.g. console,ai',
+                'schema': {'type': 'string'},
+              },
+              {
+                'name': 'levels',
+                'in': 'query',
+                'description': 'Comma-separated levels, e.g. info,error',
+                'schema': {'type': 'string'},
+              },
+              {
+                'name': 'types',
+                'in': 'query',
+                'description':
+                    'Comma-separated types, e.g. log,lifecycle,marker',
+                'schema': {'type': 'string'},
+              },
+              {
+                'name': 'stream',
+                'in': 'query',
+                'schema': {
+                  'type': 'string',
+                  'enum': ['stdout', 'stderr'],
+                },
+              },
+              {
+                'name': 'runId',
+                'in': 'query',
+                'schema': {'type': 'string'},
+              },
+              {
+                'name': 'afterSequence',
+                'in': 'query',
+                'schema': {'type': 'integer'},
+              },
+              {
+                'name': 'limit',
+                'in': 'query',
+                'schema': {'type': 'integer', 'default': 100},
+              },
+              {
+                'name': 'order',
+                'in': 'query',
+                'schema': {
+                  'type': 'string',
+                  'enum': ['asc', 'desc'],
+                },
+              },
+            ],
+            'responses': {
+              '200': {'description': 'Runtime log search results'},
+            },
+          },
+        },
+        '/api/runtime-logs/{id}': {
+          'get': {
+            'summary': 'Get one runtime log entry',
+            'parameters': [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': {'type': 'string'},
+              },
+            ],
+            'responses': {
+              '200': {'description': 'Runtime log entry'},
+            },
+          },
+        },
+        '/api/runtime-logs/context': {
+          'get': {
+            'summary': 'Get logs around one runtime log entry',
+            'parameters': [
+              {
+                'name': 'id',
+                'in': 'query',
+                'required': true,
+                'schema': {'type': 'string'},
+              },
+              {
+                'name': 'before',
+                'in': 'query',
+                'schema': {'type': 'integer', 'default': 100},
+              },
+              {
+                'name': 'after',
+                'in': 'query',
+                'schema': {'type': 'integer', 'default': 50},
+              },
+            ],
+            'responses': {
+              '200': {'description': 'Runtime log context window'},
+            },
+          },
+        },
+        '/api/runtime-logs/markers': {
+          'post': {
+            'summary': 'Write an AI/debug marker into runtime logs',
+            'responses': {
+              '200': {'description': 'Created marker log entry'},
+            },
+          },
+        },
       },
       'components': {
         'schemas': {
@@ -290,16 +428,142 @@ class ApiInspectorHttpServer {
     }
   }
 
+  /// GET /api/runtime-logs - 查询运行时日志
+  Future<Response> _handleRuntimeLogs(Request request) async {
+    try {
+      final params = request.url.queryParameters;
+      final entries = runtimeLogs.search(
+        RuntimeLogQuery(
+          query: params['q'] ?? params['query'],
+          from: DateTime.tryParse(params['from'] ?? ''),
+          to: DateTime.tryParse(params['to'] ?? ''),
+          sinceMs: int.tryParse(params['sinceMs'] ?? ''),
+          sources: parseCsvSet(params['sources']),
+          levels: parseCsvSet(params['levels']),
+          types: parseCsvSet(params['types']),
+          stream: params['stream'],
+          runId: params['runId'],
+          afterSequence: int.tryParse(params['afterSequence'] ?? ''),
+          limit: int.tryParse(params['limit'] ?? '') ?? 100,
+          order: params['order'] == 'asc'
+              ? RuntimeLogOrder.asc
+              : RuntimeLogOrder.desc,
+        ),
+      );
+      return Response.ok(
+        jsonEncode(<String, Object?>{
+          'entries': entries.map((entry) => entry.toJson()).toList(),
+          'count': entries.length,
+          'latestSequence': runtimeLogs.latestSequence,
+          'currentRunId': runtimeLogs.currentRunId,
+        }),
+        headers: _jsonHeaders,
+      );
+    } catch (e) {
+      return Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: _jsonHeaders,
+      );
+    }
+  }
+
+  /// GET /api/runtime-logs/:id - 获取运行时日志详情
+  Future<Response> _handleRuntimeLogDetail(Request request) async {
+    final id = request.params['id'];
+    if (id == null || id.isEmpty) {
+      return Response.badRequest(
+        body: jsonEncode({'error': 'Missing runtime log id'}),
+        headers: _jsonHeaders,
+      );
+    }
+    final entry = runtimeLogs.getById(id);
+    if (entry == null) {
+      return Response.notFound(
+        jsonEncode({'error': 'Runtime log not found: $id'}),
+        headers: _jsonHeaders,
+      );
+    }
+    return Response.ok(jsonEncode(entry.toJson()), headers: _jsonHeaders);
+  }
+
+  /// GET /api/runtime-logs/context?id=... - 获取前后文窗口
+  Future<Response> _handleRuntimeLogContext(Request request) async {
+    final params = request.url.queryParameters;
+    final id = params['id'];
+    if (id == null || id.isEmpty) {
+      return Response.badRequest(
+        body: jsonEncode({'error': 'Missing runtime log id'}),
+        headers: _jsonHeaders,
+      );
+    }
+    final context = runtimeLogs.context(
+      id: id,
+      before: int.tryParse(params['before'] ?? '') ?? 100,
+      after: int.tryParse(params['after'] ?? '') ?? 50,
+    );
+    if (context['target'] == null) {
+      return Response.notFound(
+        jsonEncode({'error': 'Runtime log not found: $id'}),
+        headers: _jsonHeaders,
+      );
+    }
+    return Response.ok(jsonEncode(context), headers: _jsonHeaders);
+  }
+
+  /// POST /api/runtime-logs/markers - 写入 AI/debug marker
+  Future<Response> _handleRuntimeLogMarker(Request request) async {
+    try {
+      final body = await request.readAsString();
+      final data = body.trim().isEmpty
+          ? <String, Object?>{}
+          : (jsonDecode(body) as Map).cast<String, Object?>();
+      final message =
+          data['message']?.toString() ??
+          request.url.queryParameters['message'] ??
+          '';
+      if (message.trim().isEmpty) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'Marker message is required'}),
+          headers: _jsonHeaders,
+        );
+      }
+      final entry = runtimeLogs.add(
+        source: data['source']?.toString() ?? 'ai',
+        level: data['level']?.toString() ?? 'info',
+        type: 'marker',
+        message: message,
+        context:
+            (data['context'] as Map?)?.cast<String, Object?>() ??
+            const <String, Object?>{},
+      );
+      return Response.ok(jsonEncode(entry.toJson()), headers: _jsonHeaders);
+    } catch (e) {
+      return Response.badRequest(
+        body: jsonEncode({'error': e.toString()}),
+        headers: _jsonHeaders,
+      );
+    }
+  }
+
   /// GET /api/status - 服务状态
   Future<Response> _handleStatus(Request request) async {
     final status = {
       'server': 'running',
       'connected': _client != null,
+      'runtimeLogs': {
+        'count': runtimeLogs.count,
+        'latestSequence': runtimeLogs.latestSequence,
+        'currentRunId': runtimeLogs.currentRunId,
+      },
       'endpoints': [
         'GET /api/spec',
         'GET /api/logs',
         'GET /api/logs/:id',
         'GET /api/violations',
+        'GET /api/runtime-logs',
+        'GET /api/runtime-logs/:id',
+        'GET /api/runtime-logs/context?id=:id',
+        'POST /api/runtime-logs/markers',
         'GET /api/status',
       ],
     };
