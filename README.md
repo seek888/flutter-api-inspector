@@ -160,6 +160,7 @@ curl http://localhost:8080/api/violations
 # Search runtime logs from flutter run stdout/stderr
 curl "http://localhost:8080/api/runtime-logs?q=timeout&sinceMs=600000&levels=error"
 curl "http://localhost:8080/api/runtime-logs?stream=stderr&limit=20&order=asc"
+curl "http://localhost:8080/api/runtime-logs?sources=developer&levels=warning,error"
 
 # Get context around a runtime log entry
 curl "http://localhost:8080/api/runtime-logs/context?id=log_xxx&before=100&after=50"
@@ -188,6 +189,21 @@ dart run bin/api_inspector_cli.dart logs context --id log_xxx --before 100 --aft
 
 # Write a marker before a debugging attempt
 dart run bin/api_inspector_cli.dart logs mark "start debugging login timeout"
+```
+
+Flutter app logs written through `dart:developer.log()` are captured after the
+desktop app connects to the VM Service Logging stream:
+
+```dart
+import 'dart:developer' as developer;
+
+developer.log(
+  'login request timed out',
+  name: 'auth.login',
+  level: 1000,
+  error: error,
+  stackTrace: stackTrace,
+);
 ```
 
 ## Data Redaction

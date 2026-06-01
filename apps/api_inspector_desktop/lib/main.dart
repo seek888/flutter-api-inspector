@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:api_inspector_cli/api_inspector_cli.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:vm_service/vm_service.dart';
 
 import 'http_server.dart';
 import 'runtime_logs.dart';
@@ -73,6 +74,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   AppSection _section = AppSection.run;
   ApiInspectorClient? _client;
+  StreamSubscription<Event>? _loggingSubscription;
   Process? _flutterProcess;
   List<FlutterDevice> _devices = const <FlutterDevice>[];
   FlutterDevice? _selectedDevice;
@@ -98,6 +100,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void dispose() {
     _timer?.cancel();
     _flutterProcess?.kill();
+    _loggingSubscription?.cancel();
     _client?.dispose();
     _projectController.dispose();
     _urlController.dispose();
@@ -252,10 +255,13 @@ class _DashboardPageState extends State<DashboardPage> {
     try {
       final client = await ApiInspectorClient.connect(targetUrl);
       await client.ping();
+      await _loggingSubscription?.cancel();
+      _loggingSubscription = null;
       await _client?.dispose();
       _client = client;
       // 设置 HTTP 服务器的 client
       _httpServer.setClient(client);
+      await _subscribeVmLogging(client);
       _vmServiceUrl = targetUrl;
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
@@ -267,6 +273,106 @@ class _DashboardPageState extends State<DashboardPage> {
         setState(() => _busy = false);
       }
     }
+  }
+
+  Future<void> _subscribeVmLogging(ApiInspectorClient client) async {
+    await _loggingSubscription?.cancel();
+    _loggingSubscription = client.service.onLoggingEvent.listen(
+      _recordVmLogEvent,
+    );
+    try {
+      await client.service.streamListen(EventStreams.kLogging);
+      _runtimeLogStore.add(
+        source: 'developer',
+        level: 'info',
+        type: 'lifecycle',
+        message: 'VM Service Logging stream subscribed',
+      );
+    } catch (error) {
+      _runtimeLogStore.add(
+        source: 'developer',
+        level: 'warning',
+        type: 'lifecycle',
+        message: 'VM Service Logging stream subscription failed',
+        error: <String, Object?>{'message': error.toString()},
+      );
+    }
+  }
+
+  void _recordVmLogEvent(Event event) {
+    final record = event.logRecord;
+    if (record == null) {
+      return;
+    }
+    final timestamp = record.time != null && record.time! > 0
+        ? DateTime.fromMillisecondsSinceEpoch(record.time!)
+        : event.timestamp != null && event.timestamp! > 0
+        ? DateTime.fromMillisecondsSinceEpoch(event.timestamp!)
+        : DateTime.now();
+    final message = _instanceText(record.message) ?? '';
+    final loggerName = _instanceText(record.loggerName);
+    final error = _instanceText(record.error);
+    final stackTrace = _instanceText(record.stackTrace);
+    final context = <String, Object?>{};
+    if (loggerName != null) {
+      context['loggerName'] = loggerName;
+    }
+    if (record.sequenceNumber != null) {
+      context['vmLogSequenceNumber'] = record.sequenceNumber;
+    }
+    if (event.isolate?.id != null) {
+      context['isolateId'] = event.isolate!.id;
+    }
+    if (event.isolate?.name != null) {
+      context['isolateName'] = event.isolate!.name;
+    }
+    Map<String, Object?>? errorJson;
+    if (error != null || stackTrace != null) {
+      errorJson = <String, Object?>{};
+      if (error != null) {
+        errorJson['message'] = error;
+      }
+      if (stackTrace != null) {
+        errorJson['stackTrace'] = stackTrace;
+      }
+    }
+    _runtimeLogStore.add(
+      source: 'developer',
+      level: _vmLogLevel(record.level),
+      type: error == null && stackTrace == null ? 'log' : 'exception',
+      message: message.isEmpty ? '<empty developer.log message>' : message,
+      timestamp: timestamp,
+      context: context,
+      error: errorJson,
+    );
+  }
+
+  String _vmLogLevel(int? level) {
+    final value = level ?? 0;
+    if (value >= 1200) {
+      return 'fatal';
+    }
+    if (value >= 1000) {
+      return 'error';
+    }
+    if (value >= 900) {
+      return 'warning';
+    }
+    if (value >= 800) {
+      return 'info';
+    }
+    if (value >= 500) {
+      return 'debug';
+    }
+    return 'trace';
+  }
+
+  String? _instanceText(InstanceRef? ref) {
+    final value = ref?.valueAsString;
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return value;
   }
 
   Future<void> _refresh() async {
